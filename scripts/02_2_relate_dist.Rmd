@@ -1,0 +1,126 @@
+---
+title: "Recent dispersal: relatedness v distance"
+author: "Matt DeSaix"
+date: "2024-09-11"
+output: html_document
+---
+
+
+```{r, message = FALSE}
+library(tidyverse)
+library(sf)
+library(geosphere)
+library(RColorBrewer)
+```
+
+read in meta data
+
+```{r}
+meta <- read_csv("./data/genotypes/buffer-10k/grsm-10k-meta.csv",
+                 show_col_types = FALSE) %>%
+  mutate(CollectionDate = as.Date(CollectionDate, format = "%m/%d/%Y"),
+         Month_day = as.numeric(paste0(month(CollectionDate), ".", sprintf("%02d", day(CollectionDate)))),
+         Season = ifelse(Month_day >= 4.01 & Month_day <= 8.14, "Summer", 
+                         ifelse(Month_day >= 8.15 & Month_day <= 10.31, "Fall",
+                                ifelse(Month_day >= 11.01 | Month_day <= 3.31, "Winter",
+                                       "Unknown"))))
+```
+
+```{r}
+grsm.kinship <- read_csv("./out/pcair-relate/buffer-10k/GSMNP-PCRelate-Kinship-3PCs.csv",
+                         show_col_types = FALSE)
+grsm.kinship
+```
+
+```{r}
+p.kin.k0 <- grsm.kinship %>%
+  ggplot() +
+  geom_point(aes(x = k0, y = kin)) +
+  theme_bw()
+
+# ggsave(plot = p.kin.k0,
+#        filename = "./plots/relatedness/p.kin.k0.png")
+
+p.kin.k0
+```
+
+Add lat long to kinship data and calculate geographic distance between points
+
+```{r}
+meta.lat.long <- meta %>%
+  select(SubjectID, Lat, Long, CollectionDate)
+
+full.kinship <- grsm.kinship %>%
+  left_join(meta.lat.long, by = c("ID1" = "SubjectID")) %>%
+  left_join(meta.lat.long, by = c("ID2" = "SubjectID")) %>%
+  mutate(Relationship = ifelse(kin < 0.125, "Distant",
+                               ifelse(kin >= 0.125 & kin < 0.25, "2nd",
+                                      ifelse(kin >= 0.25 & k0 < 0.1, "Parent-offspring", "Siblings"))),
+         Days = abs(as.numeric(difftime(CollectionDate.x, CollectionDate.y, units = "days")))) %>%
+  rowwise() %>%
+  mutate(Distance = distGeo(p1 = c(Lat.x, Long.x), p2 = c(Lat.y, Long.y))/1000)
+full.kinship
+```
+
+```{r}
+full.kinship %>%
+  filter(Relationship %in% c("Siblings", "Parent-offspring"),
+         Distance > 1)
+```
+
+```{r}
+kin.cols <- brewer.pal(n = 8, name = "Dark2")[4:7]
+p.dist.kin <- full.kinship %>%
+  # filter(kin >= 0,
+  #        Distance > 5) %>%
+  filter(Distance > 0.1) %>%
+  mutate(Relationship = factor(Relationship, levels = c("Siblings", "Parent-offspring", "2nd", "Distant"))) %>%
+  ggplot() +
+  geom_point(aes(x = Distance, y = kin, color = Relationship)) +
+  scale_color_manual(values = kin.cols) +
+  # facet_wrap(~Relationship) +
+  ylab("Kinship (PC-Relate)") +
+  xlab("Distance (km)") +
+  theme_classic()
+ggsave(plot = p.dist.kin,
+       filename = "./plots/relatedness/p.dist.kin.0_1km.png")
+p.dist.kin
+```
+
+```{r}
+gsmnp_boundary <- st_read("./data/shapefiles/GSMNP-park-boundary2/GRSM_BOUNDARY_POLYGON.shp") %>%
+  st_transform(4326)
+gsmnp_boundary$ID <- factor(seq.int(nrow(gsmnp_boundary)))
+gsmnp_core <- gsmnp_boundary %>%
+  filter(ID == 17)
+
+p.map.kin.connect <- full.kinship %>%
+  mutate(Relationship = factor(Relationship, levels = c("Siblings", "Parent-offspring", "2nd", "Distant"))) %>%
+  filter(kin >= 0.125,
+         Distance > 0.1) %>%
+  ggplot() +
+  geom_sf(data = gsmnp_core) +
+  geom_segment(aes(y = Lat.x, x = Long.x,
+                   yend = Lat.y, xend = Long.y,
+                   color = Relationship)) +
+  geom_point(aes(x = Long.x, y = Lat.x)) +
+  geom_point(aes(x = Long.y, y = Lat.y)) +
+  scale_color_manual(values = kin.cols) +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  scale_y_continuous(breaks = seq(35.4, 35.8, by = 0.1)) +
+  facet_wrap(~Relationship,
+             ncol = 1) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+ggsave(plot = p.map.kin.connect,
+       filename = "./plots/relatedness/p.map.kin.connect.0_1km.png")
+
+p.map.kin.connect
+```
+
+
+
+
+

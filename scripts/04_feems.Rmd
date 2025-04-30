@@ -1,0 +1,76 @@
+---
+title: "FEEMS for smokies pigs"
+author: "Matt DeSaix"
+date: "2024-09-13"
+output: html_document
+---
+
+```{r, mesage = FALSE}
+library(dggridR)
+library(tidyverse)
+library(sf)
+```
+
+```{r}
+gsmnp_boundary <- st_read("./data/shapefiles/GSMNP-park-boundary2/GRSM_BOUNDARY_POLYGON.shp") %>%
+  st_transform(4326)
+gsmnp_boundary$ID <- factor(seq.int(nrow(gsmnp_boundary)))
+gsmnp_core <- gsmnp_boundary %>%
+  filter(ID == 17)
+gsmnp_buffer <- st_buffer(gsmnp_core, 10000)
+
+ggplot() +
+  geom_sf(data = gsmnp_core) +
+  geom_sf(data = gsmnp_buffer, alpha = 0.2)
+```
+
+### Get the discrete global grid for area of interest
+
+```{r}
+full_grid <- dgconstruct(projection = "ISEA",
+                         topology = "TRIANGLE",
+                         spacing = 2,
+                         aperture = 4,
+                         metric = TRUE)
+
+rect_grid <- dgrectgrid(full_grid, minlat = 35.3, minlon = -84.2, 
+                        maxlat = 35.9, maxlon = -82.8,
+                        cellsize = 0.0008)
+st_write(rect_grid, "./data/feems/dgg/grsm-dgg-spacing2.shp")
+
+# rect_grid <- st_read("./data/feems/gsmnp-dgg.shp")
+
+ggplot() +
+  geom_sf(data = rect_grid, fill = alpha("blue", 0.4),
+          color = alpha("white", 0.4)) +
+  geom_sf(data = gsmnp_buffer)
+```
+
+The above `dgconstruct()` specifications result in a triangular grid with triangles of roughly:
+
+-  0.38 km2 area, 0.86 km apart cells for spacing = 1
+-  1.5 km2 area, 1.7 km apart cells, for spacing = 2
+-  6.1 km2 area, 3.4 km apart cells, for spacing = 5
+-  24.3 km2 area, 6.9 km apart cells for spacing = 10
+
+
+### Get outer coordinates of GSMNP boundary
+
+```{r}
+gsmnp_coords <- st_coordinates(gsmnp_buffer)[,c(1,2)]
+# write.table(gsmnp_coords, file = "./data/feems/grsm.10k.boundary.outer",
+#             col.names = FALSE, row.names = FALSE)
+head(gsmnp_coords)
+```
+
+Get sample coordinates
+
+```{r}
+gsmnp_sample_coords <- read_csv("./data/genotypes/buffer-10k/grsm-10k-meta.csv",
+                 show_col_types = FALSE) %>%
+  select(Long, Lat)
+# write.table(gsmnp_sample_coords, file = "./data/feems/grsm.10k.sample.coord",
+#             col.names = FALSE, row.names = FALSE)
+```
+
+

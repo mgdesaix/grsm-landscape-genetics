@@ -1,0 +1,283 @@
+---
+title: "Nice maps with Population Structure results"
+author: "Matt DeSaix"
+date: "2024-09-11"
+output: html_document
+---
+
+
+```{r, message = FALSE}
+library(terra)
+library(tidyterra)
+library(tidyverse)
+library(scales)
+```
+
+```{r}
+# Plink_Keep <- read.delim("./data/relatedness/GSMNP-unrelated-keep.txt", header=F)
+# colnames(Plink_Keep) <- c("Fam","SubjectID")
+Plink_Keep <- read.delim("./data/genotypes/buffer-10k/grsm-10k-final-571_10508.fam", header = F, sep = " ")[,c(1,2)]
+colnames(Plink_Keep) <- c("Fam","SubjectID")
+
+meta <- read_csv("./data/genotypes/buffer-10k/grsm-10k-meta.csv",
+                 show_col_types = FALSE)
+unrelated.meta <- Plink_Keep %>%
+  select(SubjectID) %>%
+  left_join(meta, by = "SubjectID")
+```
+
+
+```{r}
+NAD83 <- "+init=EPSG:4269"
+WGS84 <- "+init=EPSG:4326"
+
+gsmnp_boundary <- vect("./data/shapefiles/GSMNP-park-boundary2/GRSM_BOUNDARY_POLYGON.shp") %>%
+  terra::project(NAD83)
+gsmnp_boundary$ID <- factor(seq.int(nrow(gsmnp_boundary)))
+gsmnp_core <- gsmnp_boundary %>%
+  filter(ID == 17)
+
+pts.vect <- vect(unrelated.meta,
+                 geom = c("Long", "Lat"),
+                 crs = NAD83)
+```
+
+
+
+
+```{r}
+ggplot() +
+  geom_spatvector(data = gsmnp_core) +
+  geom_spatvector(data = pts.vect) +
+  coord_sf() +
+  theme_minimal()
+```
+
+```{r}
+gsmnp.elev <- terra::rast("./data/landscape/elevation_data.gtiff") %>%
+  terra::project(NAD83) %>%
+  terra::crop(gsmnp_core, mask = TRUE)
+```
+
+```{r, message = FALSE}
+ggplot() +
+  geom_spatraster(data = gsmnp.elev) +
+  geom_spatvector(data = gsmnp_core, fill = NA, size = 10) +
+  geom_spatvector(data = pts.vect) +
+  coord_sf() +
+  theme_minimal()
+```
+
+### Create hillshade effect
+
+All of this is from: https://dieghernan.github.io/202210_tidyterra-hillshade/
+
+```{r, message = FALSE}
+slope <- terrain(gsmnp.elev, "slope", unit = "radians")
+aspect <- terrain(gsmnp.elev, "aspect", unit = "radians")
+hill <- shade(slope, aspect, 30, 270)
+
+# normalize names
+names(hill) <- "shades"
+
+# Hillshading, but we need a palette
+pal_greys <- hcl.colors(1000, "Grays")
+
+index <- hill %>%
+  mutate(index_col = rescale(shades, to = c(1, length(pal_greys)))) %>%
+  mutate(index_col = round(index_col)) %>%
+  pull(index_col)
+
+
+# Get cols
+vector_cols <- pal_greys[index]
+
+hill_plot <- ggplot() +
+  geom_spatraster(
+    data = hill, fill = vector_cols, maxcell = Inf,
+    alpha = 1
+  )
+
+hill_plot
+```
+
+
+```{r, message = FALSE}
+# Regular gradient
+grad <- hypso.colors(10, "dem_poster")
+
+autoplot(gsmnp.elev) +
+  scale_fill_gradientn(colours = grad, na.value = NA)
+
+```
+
+```{r}
+
+# Try some options, but we need to be aware of the values of our raster
+raw_r_limits <- minmax(gsmnp.elev) %>% as.vector()
+
+# Rounded to lower and upper 500
+r_limits <- c(floor(raw_r_limits[1] / 500), ceiling(raw_r_limits[2] / 500)) * 500
+
+# And making min value to 0.
+r_limits <- pmax(r_limits, 0)
+
+# Compare
+raw_r_limits
+r_limits
+```
+
+
+
+Now lets have some fun with scales from tidyterra
+```{r}
+elevt_test <- ggplot() +
+  geom_spatraster(data = gsmnp.elev)
+
+# Create a helper function
+
+plot_pal_test <- function(pal) {
+  elevt_test +
+    scale_fill_hypso_c(
+      limits = raw_r_limits,
+      palette = pal
+    ) +
+    ggtitle(pal) +
+    theme_minimal()
+}
+
+plot_pal_test("dem_poster")
+```
+
+
+
+
+
+
+```{r}
+base_plot <- hill_plot +
+  # Avoid resampling with maxcell
+  geom_spatraster(data = gsmnp.elev, maxcell = Inf) +
+  scale_fill_hypso_c(
+    name = "Elevation",
+    palette = "dem_poster",
+    alpha = 0.4,
+    limits = raw_r_limits,
+    labels = label_comma()
+  )
+```
+
+
+
+
+```{r}
+base_plot +
+  geom_spatvector(data = pts.vect)
+```
+
+# Adding population structure
+
+
+
+```{r}
+library(LEA)
+library(RColorBrewer)
+library(ggnewscale)
+```
+
+```{r}
+#Load existing LEA project
+project <- load.snmfProject("./out/snmf/grsm-10k-final-571_10508.012.snmfProject")
+```
+
+
+###K2
+
+```{r}
+ce_k2 <- cross.entropy(project, K=2)
+best_run_k2 <- which.min(ce_k2)
+q_mat_k2 <- LEA::Q(project, K = 2, run = best_run_k2)
+colnames(q_mat_k2) <- paste0("K", 1:2)
+pts.k2 <- unrelated.meta %>%
+  cbind(q_mat_k2) %>%
+  arrange(desc(K1)) %>%
+  pivot_longer(cols = K1:K2,
+               names_to = "K",
+               values_to = "Q") %>%
+  group_by(SubjectID) %>%
+  filter(Q == max(Q)) %>%
+  terra::vect(geom = c("Long", "Lat"),
+              crs = NAD83)
+
+pts.k2
+```
+
+```{r}
+full.cols <- brewer.pal(n = 8, "Dark2")
+k2.cols <- full.cols[c(3,1)]
+ggplot() +
+  geom_spatvector(data = pts.k2,
+                  aes(fill = K, alpha = Q),
+                  size = 3, shape = 21) +
+  scale_fill_manual(values = k2.cols)
+```
+
+```{r}
+p.k2 <- base_plot +
+  # guides(fill = guide_legend(
+  #   override.aes = list(alpha = 1))) +
+  new_scale_fill() +
+  geom_spatvector(data = pts.k2,
+                  aes(fill = K, alpha = Q),
+                  size = 3, shape = 21) +
+  scale_fill_manual(values = k2.cols) +
+  guides(alpha = "none")
+ggsave(plot = p.k2, filename = "./plots/map/p.k2.hillshade.png")
+p.k2
+```
+
+
+
+
+### K3
+
+```{r}
+ce_k3 <- cross.entropy(project, K=3)
+best_run_k3 <- which.min(ce_k3)
+q_mat_k3 <- LEA::Q(project, K = 3, run = best_run_k3)
+colnames(q_mat_k3) <- paste0("K", 1:3)
+pts.k3 <- unrelated.meta %>%
+  cbind(q_mat_k3) %>%
+  arrange(desc(K1)) %>%
+  pivot_longer(cols = K1:K3,
+               names_to = "K",
+               values_to = "Q") %>%
+  group_by(SubjectID) %>%
+  filter(Q == max(Q)) %>%
+  terra::vect(geom = c("Long", "Lat"),
+              crs = NAD83)
+
+pts.k3
+```
+
+```{r}
+k3.cols <- full.cols[c(1,2,3)]
+p.k3 <- base_plot +
+  # guides(fill = guide_legend(
+  #   override.aes = list(alpha = 1))) +
+  new_scale_fill() +
+  geom_spatvector(data = pts.k3,
+                  aes(fill = K, alpha = Q),
+                  size = 3, shape = 21) +
+  scale_fill_manual(values = k3.cols) +
+  guides(alpha = "none")
+ggsave(plot = p.k3, filename = "./plots/map/p.k3.hillshade.png")
+p.k3
+```
+
+
+
+
+
+
+

@@ -1,0 +1,17 @@
+elev=gen_input~elevation
+slope=gen_input~slope
+roads=gen_input~roads
+canopy=gen_input~canopy
+waterBinary=gen_input~water_binary
+waterFactor=gen_input~water_factor
+water=gen_input~water
+elev_slope=gen_input~elevation+slope
+elev_slope_roads=gen_input~elevation+slope+roads
+elev_slope_roads_canopy=gen_input~elevation+slope+roads+canopy
+elev_slope_roads_canopy_waterBinary=gen_input~elevation+slope+roads+canopy+water_binary
+elev_slope_roads_canopy_waterFactor=gen_input~elevation+slope+roads+canopy+water_factor
+elev_slope_roads_canopy_water=gen_input~elevation+slope+roads+canopy+water
+slope_roads_canopy_waterBinary=gen_input~slope+roads+canopy+water_binary
+slope_roads_canopy_waterFactor=gen_input~slope+roads+canopy+water_factor
+elev_roads_canopy_waterBinary=gen_input~elevation+roads+canopy+water_binary
+elev_roads_canopy_waterFactor=gen_input~elevation+roads+canopy+water_factor

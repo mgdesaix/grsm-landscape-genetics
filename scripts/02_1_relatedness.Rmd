@@ -1,0 +1,314 @@
+---
+title: "Relatedness of GSMNP pigs"
+author: "Matt DeSaix"
+date: "2024-09-11"
+output: html_document
+---
+
+
+Going to use Courtney's method of identifying relatedness in the presence of population structure (with PCrelate/PCair) on the Missouri pigs. It will be interesting to see too the difference in estimates compared to KING-robust
+
+
+```{r, message = FALSE}
+library(SNPRelate)
+library(GENESIS)
+library(GWASTools)
+```
+
+
+```{r}
+#Specify genotype file prefix
+Genotypes <- "./data/genotypes/buffer-10k/grsm-10k-final-571_10508"
+
+#Create .gds file using .bed .bim .fam
+snpgdsBED2GDS(bed.fn = paste0(Genotypes,".bed"),
+              bim.fn = paste0(Genotypes,".bim"),
+              fam.fn = paste0(Genotypes,".fam"),
+              out.gdsfn = paste0(Genotypes,".gds"))
+```
+
+
+
+Calculate IBD coefficients by KING method of moment using gds
+"KING-robust" -- relationship inference in the presence of population stratification
+
+```{r}
+#Open GDS
+gds <- snpgdsOpen(paste0(Genotypes,".gds"))
+##KING-robust is the default if no type is specified 
+king <- snpgdsIBDKING(gds, type="KING-robust")
+#create a table of kinship coefficients. Could write this table out if desired. 
+KINGtab <- snpgdsIBDSelection(king)
+#create matrix of KING relationship estimates
+KINGmat <- kingToMatrix(king)
+snpgdsClose(gds)
+```
+
+```{r}
+outking <- paste0("./out/pcair-relate/buffer-10k/GSMNP-KING-Kinship.csv")
+data.table::fwrite(KINGtab, file = outking, 
+       col.names = T, row.names=F,quote=F, sep=",")
+```
+
+```{r}
+dim(KINGmat)
+```
+
+
+```{r}
+## --------------------------------------------------------------------------
+#read in GDS data created above
+HapMap_geno <- GdsGenotypeReader(paste0(Genotypes,".gds"))
+# create a genotype data class object
+HapMap_genoData <- GenotypeData(HapMap_geno)
+
+## --------------------------------------------------------------------------
+# run PC-AiR on pruned SNPs using KING relationship matrix and genotype data read from .gds. 
+##Generates principal components
+###Change eigen.cnt to control the number of eigenvectors returned. If <= 0 to then return all eigenvectors (Number of eigenvectors = number of unrelated individuals)
+
+mypcair <- pcair(HapMap_genoData, kinobj = KINGmat, divobj = KINGmat, eigen.cnt = 0)
+```
+
+```{r}
+summary(mypcair)
+```
+
+
+```{r}
+#Save variance proportions, eigenvalues, etc from PC-AiR PCA.
+
+Varprop <- as.data.frame(mypcair$varprop)
+Eigenvalues <- as.data.frame(mypcair$values)
+Eigenvectors <- as.data.frame(mypcair$vectors)
+
+outprefix <- paste0("./out/pcair-relate/buffer-10k/GSMNP-PCAiR-", ncol(Eigenvectors), "PCs-")
+# write.csv(Varprop, paste0(outprefix, "VarProportions.csv"), quote = FALSE, row.names = TRUE)
+# write.csv(Eigenvalues, paste0(outprefix, "Eigenvalues.csv"), quote = FALSE, row.names = TRUE)
+# write.csv(Eigenvectors, paste0(outprefix, "Eigenvectors.csv"), quote = FALSE, row.names = TRUE)
+
+## --------------------------------------------------------------------------
+#Generate scree plot of eigenvalues to evaluate # of PC to include in PC-Relate
+
+#read function
+# source("./scripts/ScreePlot_Function.R")
+# 
+# scree.plot(mypcair$values[1:ncol(Eigenvectors)], lab = FALSE, 
+#            title = "GRSM PC-AiR", 
+#            new.plot = TRUE, pdf.file = TRUE, 
+#            pdf.name = "./out/pcair-relate/buffer-10k/GSMNP-PCAiR-Screeplot.pdf")
+```
+
+
+```{r}
+#PCA plots
+plot(mypcair)
+plot(mypcair, vx = 1, vy = 2)
+```
+
+
+## Use automatic PC selection tool - from Courtney's relatedness work
+
+```{r}
+library(PCAtools)
+library(mousetRajectory)
+library(findPC)
+```
+
+```{r}
+pcaireigenvalues <- setNames(mypcair$values,seq(1,ncol(Eigenvectors),1))
+
+is_monotonic(pcaireigenvalues, decreasing = T)
+
+NumPCsRetain <- findElbowPoint(pcaireigenvalues)
+NumPCsRetain
+```
+
+`findPC` method
+
+```{r}
+pcairsdev <- sqrt(mypcair$values)
+# NumPCsRetain2 <- findPC(sdev=pcairsdev,number=length(pcairsdev),method="perpendicular line",figure=T)[,1]
+NumPCsRetain2 <- findPC(sdev=pcairsdev,number=length(pcairsdev),method="perpendicular line",figure=T)
+```
+
+                     
+```{r}
+# run PC-Relate to obtain relationship matrix 
+HapMap_genoData <- GenotypeBlockIterator(HapMap_genoData)
+
+#pcs = A matrix of principal components (PCs) to be used for ancestry adjustment.
+##Each column represents a PC, and each row represents an individual
+##When drop is FALSE, the dimensions of the object are kept.
+
+#training.set = vector of individual IDs specifying which samples are used to estimate the ancestry adjustment at each SNP
+
+# small.samp.correct = Post-hoc correction to try to prevent over adjustment driven by a small number of samples with high leverage due to unique ancestry. Recommended if < 5,000 samples in your analysis (Conomos even used it up to ~10,000 samples)
+
+# run pcrelate() with PCs 1 through i
+mypcrel <- pcrelate(HapMap_genoData, 
+                     pcs = mypcair$vectors[, 1:NumPCsRetain, drop = FALSE],
+                     training.set = mypcair$unrels,
+                     small.samp.correct = TRUE,
+                     verbose = TRUE)
+```
+  
+  
+  
+  
+```{r}
+# Convert PC-Relate results to a matrix 
+grm <- pcrelateToMatrix(mypcrel, scaleKin = 1) # specifies a factor to multiply the kinship coefficients by in the GRM 
+  
+#Convert to data frame so that GRM can be saved
+matrix <- as.data.frame(as.matrix(grm))
+# outname <- paste0("./out/pcair-relate/buffer-10k/GSMNP-PCRelate-RelatednessMatrix-", NumPCsRetain, "PCs.csv")
+# write.csv(matrix, outname)
+  
+#OR
+```
+
+```{r}
+#Output results in long format to extract kinship and k(0) for simulated individuals
+kinBtwn <- mypcrel[["kinBtwn"]]
+  
+#Include header because files will not be merged
+outname2 <- paste0("./out/pcair-relate/buffer-10k/GSMNP-PCRelate-Kinship-", NumPCsRetain, "PCs.csv")
+# data.table::fwrite(kinBtwn, file = outname2, 
+#        col.names = T, row.names=F,quote=F, sep=",")
+ 
+```
+
+
+## Compare KING vs PCrelate
+
+
+```{r, message = FALSE, warning = FALSE}
+library(tidyverse)
+```
+
+```{r}
+full.kin <- KINGtab %>%
+  select(ID1, ID2, kinship) %>%
+  rename("KING" = "kinship") %>%
+  left_join(kinBtwn %>%
+              select(ID1, ID2, kin) %>%
+              rename("PCRelate" = "kin"),
+            by = c("ID1" = "ID1", 
+                   "ID2" = "ID2"))
+head(full.kin)
+```
+
+```{r}
+summary(full.kin)
+```
+
+Use the kinship cutoff of 0.177 (i.e. 1st and 2nd degree relatives)
+
+```{r}
+full.kin %>%
+  filter(PCRelate >= 0.177) %>%
+  group_by(ID1) %>%
+  summarize(N = n()) %>%
+  arrange(desc(N))
+```
+
+
+
+Organize the data to get an ordered list of individuals based on how many other related individuals they have...thus, can prioritize removing individuals who have the most relatives
+
+```{r}
+full.kin.related.ID1 <- full.kin %>%
+  filter(PCRelate >= 0.177) %>%
+  group_by(ID1) %>%
+  summarize(N = n(),
+            .groups = "drop") %>%
+  rename("ID" = "ID1")
+
+full.kin.related.ID2 <- full.kin %>%
+  filter(PCRelate >= 0.177) %>%
+  group_by(ID2) %>%
+  summarize(N = n(),
+            .groups = "drop") %>%
+  rename("ID" = "ID2")
+
+full.kin.related.tot <- rbind(full.kin.related.ID1,
+                              full.kin.related.ID2) %>%
+  group_by(ID) %>%
+  summarize(Total = sum(N),
+            .groups = "drop") %>%
+  arrange(desc(Total)) %>%
+  pull(ID)
+```
+
+Below, create a vector of the individual IDs to remove based on relatedness. Iteratively, go through the names of related individuals (from above - ordered by individuals with most relatives), and remove an individual and add that to the list until there are no more related pairs.
+
+```{r}
+related.remove <- c()
+
+tmp.related.tib <- full.kin %>%
+  filter(PCRelate >= 0.177)
+
+for(i in 1:length(full.kin.related.tot)){
+  tmp.ind <- full.kin.related.tot[i]
+  tmp.related.tib.new <- tmp.related.tib %>%
+    filter(ID1 != tmp.ind,
+           ID2 != tmp.ind)
+  if(nrow(tmp.related.tib) != nrow(tmp.related.tib.new)){
+    related.remove <- c(related.remove, tmp.ind)
+  }
+  if(nrow(tmp.related.tib.new) == 0){
+    print("All done!")
+    break
+  }
+  tmp.related.tib <- tmp.related.tib.new
+  
+}
+writeLines(related.remove,
+           "./data/relatedness/buffer-10k/grsm-10k-related-pig-IDs.txt")
+
+length(related.remove)
+```
+
+
+
+```{r}
+full.kin %>%
+  filter(KING > 0) %>%
+  ggplot() +
+  geom_point(aes(x = KING,
+                 y = PCRelate))
+```
+
+
+```{r}
+full.kin %>%
+  ggplot() +
+  geom_point(aes(x = KING,
+                 y = PCRelate))
+```
+
+### Create unrelated "keep" file for PLINK
+
+```{r}
+filtered.fam <- read_table("./data/genotypes/buffer-10k/grsm-10k-final-571_10508.fam",
+                           col_names = FALSE)
+unrelated.keep <- filtered.fam %>%
+  select(1,2) %>%
+  filter(!X2 %in% related.remove)
+write_delim(unrelated.keep, "./data/relatedness/buffer-10k/grsm-10k-unrelated-keep.txt",
+            delim = "\t", col_names = FALSE)
+unrelated.keep
+```
+
+```{sh}
+plink=../software/plink-1.9/plink
+bfile=./data/genotypes/buffer-10k/grsm-10k-final-571_10508
+keep=./data/relatedness/buffer-10k/grsm-10k-unrelated-keep.txt
+outname=./data/genotypes/buffer-10k/grsm-10k-final-unrelated-282_10508
+${plink} --noweb --bfile ${bfile} --keep ${keep} --make-bed --recode A --out ${outname}
+```
+
+
+
+

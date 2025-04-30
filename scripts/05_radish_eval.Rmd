@@ -1,0 +1,166 @@
+---
+title: "Radish evaluation"
+author: "Matt DeSaix"
+date: "2024-1-27"
+output: html_document
+---
+
+```{r, message = F, warning = F}
+library(radish)
+library(tidyverse)
+library(raster)
+library(terra)
+library(tidyterra)
+library(viridis)
+```
+
+# Run Radish (on HPC)
+
+```{r}
+# surface <- conductance_surface(covariates = scale_covs_small,
+#                                coords = input_samples,
+#                                directions = 8)
+# 
+# ids.index <- which(meta$SubjectID %in% ids.filter$SubjectID)
+# pca.dist.mat <- readRDS("./data/radish/genetics/pca.dist.mat.RDS")
+# gen_input <- pca.dist.mat[ids.index, ids.index]
+# fit_mlpe <- radish(gen_input ~ elevation + slope,
+#                    data = surface, 
+#                    conductance_model = radish::loglinear_conductance, 
+#                    measurement_model = radish::mlpe)
+# 
+# summary(fit_mlpe)
+```
+
+# HPC array results
+
+Ran a job array of different covariate combinations to get AIC for the models
+
+```{r}
+
+# gen_input <- read_table("./data/radish")
+# array_covariates <- read_delim("./radish-array.txt",
+#                                col_names = c("model_name", "model"),
+#                                delim = "=", show_col_types = FALSE) %>%
+#   rowid_to_column("iter")
+# agg2_aic <- read_table("./out/radish/30m_2agg/aic-summary-64pcs-agg2.txt",
+#                        col_names = c("response", "agg_factor", "covariates", "aic"),
+#                        show_col_types = FALSE)
+
+agg4_aic <- read_table("./out/radish/30m_4agg/hpc_summaries/model-summaries-AIC.txt",
+                       col_names = c("covariates", "col2", "aic"),
+                       show_col_types = FALSE) %>%
+  add_column(.before = 1, "response" = "64PCs", "agg_factor" = "4agg") %>%
+  select(-c(col2))
+
+
+
+agg4_aic %>%
+  filter(!str_detect(covariates, "water")) %>%
+  mutate(aic_diff = aic - min(aic, na.rm = T)) %>%
+  arrange(aic_diff)
+```
+
+
+
+# Models from HPC
+
+### Genetics (64 PCs) 
+
+```{r}
+fitted_conductance_4agg <- terra::rast("./out/radish/30m_4agg/hpc_summaries/elev_slope_roads_canopy/64PCs_4agg.elev_slope_roads_canopy.conductance_raster.tif")
+
+p.cond <- ggplot() +
+  geom_spatraster(data = log(fitted_conductance_4agg)) +
+  scale_fill_viridis(name = "Conductance")
+p.cond
+```
+
+```{r}
+model1_fit <- read_table("./out/radish/30m_4agg/hpc_summaries/elev_slope_roads_canopy/64PCs_4agg.elev_slope_roads_canopy.fitted_df.txt")
+model1_fit %>%
+  ggplot() +
+  geom_point(aes(x = resistance_distance, y = genetic_distance))
+```
+
+```{r}
+model1_fit.lm <- lm(genetic_distance ~ resistance_distance, model1_fit)
+summary(model1_fit.lm)
+```
+
+```{r}
+covariates_4agg <- readRDS("./data/radish/intermediary/30m_4agg/covariates_4agg.Rds")
+model1_summary <- summary(readRDS("./out/radish/30m_4agg/models/fit_mlpe_64PCs_4agg.elev_slope_roads_canopy.Rds"))
+model1_tab <- as.data.frame(model1_summary$ztable[,1:2])
+model1_summary
+```
+```{r}
+canopy_rng <- seq(cellStats(covariates_4agg$canopy, min),
+                  cellStats(covariates_4agg$canopy, max), length = 100)
+plot_canopy <- data.frame(mean = exp(model1_tab["canopy", "Estimate"] * canopy_rng),
+                          canopy_rng)
+
+plot_canopy %>%
+  ggplot(aes(x = canopy_rng, y = mean)) +
+  geom_line() +
+  theme_classic()
+```
+
+
+```{r}
+library(PieGlyph)
+library(RColorBrewer)
+library(ggnewscale)
+cluster_cols <- brewer.pal(n = 5, name = "Dark2")
+
+gsmnp_boundary <- vect("./data/shapefiles/GSMNP-park-boundary2/GRSM_BOUNDARY_POLYGON.shp") 
+# %>%
+  # st_transform(4326)
+gsmnp_boundary$ID <- factor(seq.int(nrow(gsmnp_boundary)))
+gsmnp_core <- gsmnp_boundary %>%
+  filter(ID == 17)
+
+q_df_arrange_k2 <- read_csv("./out/snmf/q_df_arrange_k2.csv",
+                            show_col_types = FALSE)
+```
+
+```{r}
+p.cond.pie <- ggplot() +
+  geom_spatraster(data = log(fitted_conductance_4agg)) +
+  scale_fill_viridis(name = "Conductance", option = "D") +
+  new_scale_fill() +
+  geom_spatvector(data = gsmnp_core, fill = NA,
+                  color = "black", linewidth = 1) +
+  geom_pie_glyph(data = q_df_arrange_k2,
+                 aes(y = Lat, x = Long),
+                 radius = 0.2,
+                 slice = c("K1", "K2"),
+                 colour = "grey20") +
+  scale_fill_manual(name = "Genetic cluster",
+                    values = cluster_cols[c(2,1)],
+                    breaks = c("K1", "K2")) +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  guides(fill = guide_legend(override.aes = list(fill = cluster_cols[c(2,1)]))) +
+  theme_classic()
+ggsave(plot = p.cond.pie, filename = "./plots/radish/p.conductance_rast.agg4_full_model.pie_pts.png",
+       width = 10, height = 8)
+p.cond.pie
+```
+
+```{r}
+fitted_4agg.df <- read_table("./out/radish/30m_4agg/hpc_summaries/elev_slope_roads_canopy/64PCs_4agg.elev_slope_roads_canopy.fitted_df.txt", show_col_types = FALSE)
+fitted_4agg.df
+fitted.lm <- lm(genetic_distance ~ resistance_distance, data = fitted_4agg.df)
+summary(fitted.lm)
+```
+
+
+
+### Waterfactor model
+
+```{r}
+streams_model <- readRDS("./out/radish/30m_4agg/models/fit_mlpe_64PCs_4agg.elev_slope_roads_canopy_waterFactor.Rds")
+streams_model_sum <- summary(streams_model)
+streams_model_sum
+```

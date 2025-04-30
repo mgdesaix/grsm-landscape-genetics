@@ -1,0 +1,128 @@
+---
+title: "01-snp-filtering"
+author: "Matt DeSaix"
+date: "2024-09-05"
+output: html_document
+---
+
+## Pull all NC and TN and resample
+
+Create buffer around GRSM to include all individuals
+
+```{r, message = FALSE}
+library(tidyverse)
+library(terra)
+library(tidyterra)
+```
+
+
+```{r}
+tn_nc.fam <- read_table("./data/genotypes/buffer-10k/grsm-10k-geno_0.05-maf_0.05-571_8654.fam",
+                        col_names = c("SubjectID", "FamID", "a", "b", "c", "d"),
+                        show_col_types = FALSE)
+tn_nc.meta <- read_csv("./data/samples/NC_TN_Meta.csv",
+                       show_col_types = FALSE) %>%
+  select(SubjectID, Lat, Long, State, County, CollectionDate)
+tn_nc.meta
+```
+
+
+```{r}
+NAD83 <- "+init=EPSG:4269"
+WGS84 <- "+init=EPSG:4326"
+
+gsmnp_boundary <- vect("./data/shapefiles/GSMNP-park-boundary2/GRSM_BOUNDARY_POLYGON.shp") %>%
+  terra::project(NAD83)
+gsmnp_boundary$ID <- factor(seq.int(nrow(gsmnp_boundary)))
+gsmnp_core <- gsmnp_boundary %>%
+  tidyterra::filter(ID == 17)
+
+
+gsmnp_buffer <- terra::buffer(gsmnp_core, width = 10000)
+
+# writeVector(gsmnp_core, filename = "./data/shapefiles/grsm-core/grsm_core_boundary.shp")
+# gsmnp_buffer <- terra::buffer(gsmnp_core, width = 10000)
+# writeVector(gsmnp_buffer, filename = "./data/shapefiles/grsm-core/grsm_buffer_10km.shp")
+# gsmnp_buffer <- terra::buffer(gsmnp_core, width = 50000)
+# writeVector(gsmnp_buffer, filename = "./data/shapefiles/grsm-core/grsm_buffer_50km.shp")
+
+tn_nc.vect <- vect(tn_nc.meta,
+                 geom = c("Long", "Lat"),
+                 crs = NAD83)
+```
+
+```{r}
+ggplot() +
+  geom_spatvector(data = gsmnp_buffer, fill = "green") +
+  geom_spatvector(data = gsmnp_core) +
+  geom_spatvector(data = tn_nc.vect) +
+  coord_sf() +
+  theme_minimal() +
+  xlim(c(-86, -82)) +
+  ylim(c(34,37))
+```
+
+Save off 10k buffer individuals 
+
+```{r}
+gsmnp_buffer <- terra::buffer(gsmnp_core, width = 10000)
+buffer.10k.pts <- terra::intersect(tn_nc.vect, gsmnp_buffer)
+buffer.10k.ids <- buffer.10k.pts$SubjectID
+buffer.10k.keep <- tn_nc.fam %>%
+  filter(SubjectID %in% buffer.10k.ids) %>%
+  select(SubjectID, FamID)
+# write_delim(buffer.10k.keep, file = "./data/genotypes/buffer-10k/buffer.10k.keep.txt",
+#             col_names = FALSE)
+buffer.10k.meta <- buffer.10k.keep %>%
+  select(SubjectID) %>%
+  left_join(tn_nc.meta, by = "SubjectID")
+# write_csv(buffer.10k.meta, "./data/genotypes/buffer-10k/grsm-10k-meta.csv")
+
+ggplot() +
+  geom_spatvector(data = gsmnp_buffer, fill = "green") +
+  geom_spatvector(data = gsmnp_core, alpha = 0.2) +
+  geom_spatvector(data = buffer.10k.pts)
+```
+
+Create PLINK of 10k buffer individuals
+
+```{sh}
+plink=../software/plink-1.9/plink
+bfile=./data/genotypes/NC-TN/TN_NC_Geno
+keep=./data/genotypes/buffer-10k/buffer.10k.keep.txt
+outname=./data/genotypes/buffer-10k/grsm-10k-full
+${plink} --noweb --bfile ${bfile} --keep ${keep} --make-bed --out ${outname}
+```
+
+
+### 50k buffer
+
+Save off 50k buffer individuals 
+
+```{r}
+gsmnp_buffer <- terra::buffer(gsmnp_core, width = 50000)
+buffer.50k.pts <- terra::intersect(tn_nc.vect, gsmnp_buffer)
+buffer.50k.ids <- buffer.50k.pts$SubjectID
+buffer.50k.keep <- tn_nc.fam %>%
+  filter(SubjectID %in% buffer.50k.ids) %>%
+  select(SubjectID, FamID)
+write_delim(buffer.50k.keep, file = "./data/genotypes/buffer-50k/buffer.50k.keep.txt",
+            col_names = FALSE)
+
+
+ggplot() +
+  geom_spatvector(data = gsmnp_buffer, fill = "green") +
+  geom_spatvector(data = gsmnp_core, alpha = 0.2) +
+  geom_spatvector(data = buffer.50k.pts)
+```
+
+Create PLINK of 50k buffer individuals
+
+```{sh}
+plink=../software/plink-1.9/plink
+bfile=./data/genotypes/NC-TN/TN_NC_Geno
+keep=./data/genotypes/buffer-50k/buffer.50k.keep.txt
+outname=./data/genotypes/buffer-50k/grsm-50k-full
+${plink} --noweb --bfile ${bfile} --keep ${keep} --make-bed --out ${outname}
+```
+

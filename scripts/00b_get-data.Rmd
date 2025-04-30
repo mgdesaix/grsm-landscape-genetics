@@ -1,0 +1,199 @@
+---
+title: "Get data"
+author: "Matt DeSaix"
+date: "2025-01-22"
+output: html_document
+---
+
+```{r, message = F, warning = F}
+library(terra)
+library(tidyverse)
+library(tidyterra)
+```
+
+
+Elevation
+
+```{r}
+# elevation.rast <- rast("./data/landscape/elevation_data.gtiff")
+elevation.rast <- rast("/Volumes/FayeDog SSD/Work/GSMNP/data/landscape/elevation_data.gtiff")
+plot(elevation.rast)
+```
+
+```{r}
+slope.rast <- terrain(elevation.rast, v = "slope")
+slope.rast
+plot(slope.rast)
+```
+
+NLCD
+
+```{r}
+# nlcd.rast <- rast("./data/landscape/Annual_NLCD_LndCov_2023_CU_C1V0.tif")
+nlcd.rast <- rast("/Volumes/FayeDog SSD/Work/GSMNP/data/landscape/Annual_NLCD_LndCov_2023_CU_C1V0.tif")
+e <- ext(c(900000, 1300000, 1300000, 1600000))
+nlcd.rast.crop <- crop(nlcd.rast, e)
+plot(nlcd.rast.crop)
+```
+
+```{r}
+nlcd.final <- terra::project(nlcd.rast.crop, "EPSG:4326",
+                                    res = res(elevation.rast),
+                                    method = "near") %>%
+  resample(elevation.rast, method = "near")
+
+check.vals <- sort(unique(values(nlcd.final)))
+
+cat.df <- data.frame("ID" = c(0, check.vals),
+                     "y" = c(NA, check.vals))
+nlcd.cat <- terra::classify(nlcd.final, cat.df)
+
+plot(nlcd.cat)
+```
+
+Tree Canopy
+
+
+
+```{r}
+# canopy.rast <- rast("./data/landscape/nlcd_tcc_conus_2021_v2021-4.tif")
+canopy.rast <- rast("/Volumes/FayeDog SSD/Work/GSMNP/data/landscape/nlcd_tcc_conus_2021_v2021-4.tif")
+e <- ext(c(900000, 1300000, 1300000, 1600000))
+canopy.rast.crop <- crop(canopy.rast, e)
+canopy.final <- terra::project(canopy.rast.crop, "EPSG:4326",
+                                    res = res(elevation.rast),
+                                    method = "bilinear") %>%
+  resample(elevation.rast)
+canopy.final[canopy.final > 100] <- 100
+plot(canopy.final)
+```
+
+
+
+## Save off raster stuff
+
+```{r}
+writeRaster(elevation.rast, filename = "./data/radish/covariates/grsm.elevation.30m.tif", filetype = "GTiff")
+writeRaster(slope.rast, filename = "./data/radish/covariates/grsm.slope.30m.tif", filetype = "GTiff")
+writeRaster(nlcd.final, filename = "./data/radish/covariates/grsm.nlcd.30m.tif", filetype = "GTiff")
+writeRaster(canopy.final, filename = "./data/radish/covariates/grsm.canopy.30m.tif", filetype = "GTiff")
+```
+
+# Polygon stuff (Rasterize, etc)
+
+
+## shape files
+
+```{r}
+road.lyr <- terra::vect("./data/landscape/roads/North_American_Roads.shp") %>%
+  project("EPSG:4326")
+# road.lyr <- terra::vect("/Volumes/FayeDog SSD/Work/GSMNP/data/landscape/roads/North_American_Roads.shp") %>%
+#   project("EPSG:4326")
+
+road.final <- crop(road.lyr, ext(elevation.rast))
+plot(road.final)
+```
+
+
+```{r}
+r <- rast(road.final, resolution = res(elevation.rast)*5)
+roads.rast <- rasterize(road.final, r, "SURFACE") %>%
+  resample(elevation.rast, method = "near")
+
+cat.df <- data.frame("SURFACE" = c(NaN, 0),
+                     "y" = c(0, 1))
+roads.rast.final <- classify(roads.rast, cat.df)
+plot(roads.rast.final)
+```
+
+```{r}
+# water.lyr <- terra::vect("./data/landscape/rivers/NHDPlusV21_National_Seamless_Flattened_Lower48.gdb", layer = "NHDFlowline_Network")
+# water.final <- crop(water.lyr, ext(elevation.rast))
+# writeVector(water.final, "./data/landscape/grsm.rivers.RAW.shp")
+water.final <- vect("./data/landscape/grsm.rivers.RAW.shp") %>%
+  project("EPSG:4326")
+plot(water.final)
+```
+
+```{r}
+r <- rast(water.final, resolution = res(elevation.rast)*5)
+water.rast <- rasterize(water.final, r, "StreamOrde") %>%
+  resample(elevation.rast, method = "near")
+check.vals <- sort(unique(water.rast$StreamOrde)[[1]])
+cat.df <- data.frame("StreamOrde" = c(NaN, check.vals),
+                     "y" = c(0, check.vals))
+water.rast.final <- classify(water.rast, cat.df)
+plot(water.rast.final)
+```
+
+## Save off rasterized shapefiles
+
+```{r}
+writeRaster(water.rast.final, filename = "./data/radish/covariates/grsm.water.30m.tif", filetype = "GTiff")
+writeRaster(roads.rast.final, filename = "./data/radish/covariates/grsm.roads.30m.tif", filetype = "GTiff")
+```
+
+
+
+
+```{r}
+e <- c(-84.029, -83.005, 35.443, 35.762)
+
+
+scale_covs <- raster::stack(scale(elevation.lyr), scale(slope.lyr), scale(canopy.lyr),
+                            nlcd.cat,
+                            roads.cat, water.cat) %>%
+  crop(e) %>%
+  raster::stack()
+names(scale_covs) <- c("elevation", "slope", "canopy", "nlcd",
+                       "roads", "water")
+scale_covs
+```
+
+
+```{r}
+small_e <- c(-83.9, -83.65, 35.4, 35.55)
+scale_covs_small <- crop(scale_covs, small_e) %>%
+  raster::aggregate(fact = 10, fun = modal) %>%
+  raster::stack()
+```
+
+```{r}
+scale_covs_small
+```
+
+```{r}
+meta <- read_csv("./data/genotypes/grsm-10k/grsm-10k-meta.csv",
+                 show_col_types = FALSE) %>%
+  mutate(Long_jitter = jitter(Long, factor = 1),
+         Lat_jitter = jitter(Lat, factor = 1),
+         Long_lat = paste0(Long, "_", Lat),
+         Long_lat_jitter = paste0(Long_jitter, "_", Lat_jitter))
+ids.filter <- meta %>%
+  filter(Long > small_e[1],
+         Long < small_e[2],
+         Lat > small_e[3],
+         Lat < small_e[4])
+
+input_samples <- SpatialPoints(coords = ids.filter[,c("Long", "Lat")])
+```
+
+```{r}
+plot(scale_covs_small[[1]])
+points(input_samples)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

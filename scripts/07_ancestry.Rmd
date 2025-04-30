@@ -1,0 +1,123 @@
+---
+title: "Ancestry"
+author: "Matt DeSaix"
+date: "2025-03-28"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(RColorBrewer)
+library(ade4)
+```
+
+
+```{r}
+q_round2 <- read_table("./out/ancestry/summary_Q_round2.txt", show_col_types = F,
+                       col_names = c("SubjectID", "Commercial_mixed", "Duroc", "Heritage", "Primitive", "WildBoar"))
+
+q_round2
+```
+
+```{r}
+q_round2 %>%
+  pivot_longer(cols = Commercial_mixed:WildBoar, 
+               names_to = "K", values_to = "prob") %>%
+  group_by(K) %>%
+  summarize(Mean_ancestry = mean(prob),
+            Max_ancestry = max(prob),
+            Min_ancestry = min(prob))
+```
+
+```{r}
+breeds <- c("Commercial_mixed", "Duroc", "Heritage", "Primitive", "WildBoar")
+k5.cols <- c("#F9ED69", "#FABB33", "#72CCF2", "#00C09D", "#515151")
+
+p.ancestry <- q_round2 %>%
+  pivot_longer(cols = Commercial_mixed:WildBoar, 
+               names_to = "K", values_to = "prob") %>%
+  mutate(K = factor(K, levels = breeds)) %>%
+  ggplot(aes(SubjectID, prob, fill = K)) +
+  geom_col() +
+  scale_fill_manual(values = k5.cols,
+                    breaks = breeds,
+                    labels = c("Commercial",
+                               "Duroc",
+                               "Heritage",
+                               "Primitive",
+                               "Wild Boar")) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  labs(fill = "Reference Group") +
+  ylab("Proportion of genetic association") +
+  xlab("Individual")
+ggsave(plot = p.ancestry,
+       filename = "./plots/ancestry/p.K5_reference.barplots.png",
+       width = 8, height = 4)
+p.ancestry
+```
+
+
+```{r}
+pca.ancestry <- dudi.pca(q_round2[,-1], center = TRUE, scale = FALSE, nf=10, scannf = FALSE)
+screeplot(pca.ancestry)
+```
+
+```{r}
+cluster_cols <- brewer.pal(n = 5, name = "Dark2")
+q_df_arrange_k3 <- read_csv("./out/snmf/q_df_arrange_k3.csv",
+                            show_col_types = FALSE)
+k3_pop_meta <- q_df_arrange_k3 %>%
+  rowwise() %>%
+  mutate(Pop_K3 = which.max(c(K1, K2, K3))) %>%
+  select(SubjectID, K1, K2, K3, Pop_K3)
+
+pca.ancestry.df <- pca.ancestry$li %>%
+  dplyr::select(Axis1:Axis2) %>%
+  rename("PC1" = "Axis1", "PC2" = "Axis2") %>%
+  cbind(q_round2) %>%
+  left_join(k3_pop_meta, by = "SubjectID") %>%
+  mutate(Pop_K3 = factor(Pop_K3))
+
+pca.ancestry.df %>%
+  ggplot() +
+  geom_point(aes(x = PC1, y = PC2, color = Pop_K3))
+```
+
+
+```{r}
+pca.df <- read_csv("./out/population-structure/gsmnp.571x8654.pca.df.csv",
+                   show_col_types = FALSE)
+
+p.pca.1_2.wb <- pca.df %>%
+  filter(PC_x == "PC1",
+         PC_y == "PC2") %>%
+  left_join(q_round2, by = "SubjectID") %>%
+  left_join(k3_pop_meta, by = "SubjectID") %>%
+  mutate(Pop_K3 = factor(Pop_K3)) %>%
+  ggplot() +
+  geom_point(aes(x = val_x, y = val_y, color = WildBoar, shape = Pop_K3),
+             size = 2) +
+  scale_color_continuous(name = "Wild Boar",
+                         type = "viridis", option = "B") +
+  xlab("PC1 (4.9% variation)") +
+  ylab("PC2 (2.7% variation)") +
+  # facet_grid(Sex~County) +
+  theme_bw()
+p.pca.1_2.wb
+```
+
+
+```{r}
+min_thresh <- 0.8
+pca.ancestry.df %>%
+  mutate(Pop_K3 = ifelse(K1 < min_thresh & K2 < min_thresh & K3 < min_thresh, NA, Pop_K3)) %>%
+  mutate(Pop_K3 = factor(Pop_K3)) %>%
+  pivot_longer(Commercial_mixed:WildBoar, names_to = "Breed", values_to = "Q") %>%
+  ggplot() +
+  geom_boxplot(aes(x = Pop_K3, y = Q)) +
+  facet_wrap(~Breed)
+```
+
+
+

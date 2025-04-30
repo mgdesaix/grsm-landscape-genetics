@@ -1,0 +1,43 @@
+---
+title: "01-snp-filtering"
+author: "Matt DeSaix"
+date: "2024-09-05"
+output: html_document
+---
+
+I create the `gsmnp-10k-full-525_62134` data based on Rachael identifying the individuals of interest in GSMNP boundaries.
+
+```{sh}
+plink=../software/plink-1.9/plink
+bfile=./data/genotypes/buffer-10k/grsm-10k-full-571_62134
+outname=./data/genotypes/buffer-10k/grsm-10k-geno_0.05-maf_0.05-571_35641
+outname=./data/genotypes/buffer-10k/filtered/grsm-10k-geno_0.05-maf_0.05-571_35641
+${plink} --noweb --bfile ${bfile} --geno 0.05 --maf 0.05 --make-bed --out ${outname}
+```
+
+LD filtering
+
+```{sh}
+plink=../software/plink-1.9/plink
+bfile=./data/genotypes/buffer-10k/filtered/grsm-10k-geno_0.05-maf_0.05-571_35641
+outname=./data/genotypes/buffer-10k/filtered/grsm-10k-geno_0.05-maf_0.05-571_35641
+
+${plink} --noweb --bfile ${bfile} --indep-pairwise 10 1 0.5 --out ${outname}
+```
+
+
+```{sh}
+wc -l ./data/genotypes/buffer-10k/filtered/grsm-10k-geno_0.05-maf_0.05-571_35641.prune.in
+```
+
+
+
+```{sh}
+plink=../software/plink-1.9/plink
+bfile=./data/genotypes/buffer-10k/filtered/grsm-10k-geno_0.05-maf_0.05-571_35641
+extract=./data/genotypes/buffer-10k/filtered/grsm-10k-geno_0.05-maf_0.05-571_35641.prune.in
+outname=./data/genotypes/buffer-10k/grsm-10k-final-571_10508
+
+${plink} --noweb --bfile ${bfile} --extract ${extract} --mind 0.95 --make-bed --recode A --out ${outname}
+```
+

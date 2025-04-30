@@ -1,0 +1,179 @@
+---
+title: "Population structure in the Smokies"
+author: "Matt DeSaix"
+date: "2024-09-11"
+output: html_document
+---
+
+```{r, message = FALSE}
+# BiocManager::install("LEA")
+library(LEA)
+library(randomcoloR)
+library(tidyverse)
+```
+
+
+```{r}
+Plink_Keep <- read.delim("./data/genotypes/buffer-10k/grsm-10k-geno_0.05-maf_0.05-571_8654.fam", header = F, sep = " ")[,c(1,2)]
+colnames(Plink_Keep) <- c("Fam","SubjectID")
+
+
+meta <- read_csv("./data/genotypes/buffer-10k/grsm-10k-meta.csv",
+                 show_col_types = FALSE)
+sample.meta <- Plink_Keep %>%
+  select(SubjectID) %>%
+  left_join(meta, by = "SubjectID")
+```
+
+# Plot some K values
+
+
+```{r}
+q_df_arrange_k2 <- read_csv("./out/snmf/q_df_arrange_k2.csv",
+                            show_col_types = FALSE)
+q_df_arrange_k2 %>%
+  pivot_longer(cols = K1:K2,
+               names_to = "K",
+               values_to = "Q") %>%
+  mutate(SubjectID = factor(SubjectID, levels = q_df_arrange_k2$SubjectID)) %>% 
+  ggplot() +
+  geom_col(aes(x = SubjectID, y = Q, fill = K)) +
+  theme_minimal()
+```
+
+```{r}
+q_df_arrange_k2 %>%
+  pivot_longer(cols = K1:K2,
+               names_to = "K",
+               values_to = "Q") %>%
+  group_by(SubjectID) %>%
+  filter(Q == max(Q)) %>%
+  ggplot() +
+  geom_point(aes(x = Long, y = Lat, color = K, alpha = Q),
+             size = 4) +
+  theme_minimal() +
+  coord_equal()
+```
+
+
+*Basic piechart with PieGlyph*
+plot <- map + 
+  # Add pie-charts for each state
+  geom_pie_glyph(aes(y = pie_lat, x = pie_long),
+                 data = votes_data, colour = 'black',
+                 slices = c('Democratic','Republic','Other'))+
+  # Colours of the pie sectors
+  scale_fill_manual(values = c('#047db7','#c52d25', 'grey'), name = 'Party')+
+  # Place legend on top of the plot
+  theme(legend.position = 'top')
+plot
+
+```{r}
+library(PieGlyph)
+library(RColorBrewer)
+library(sf)
+cluster_cols <- brewer.pal(n = 5, name = "Dark2")
+
+gsmnp_boundary <- st_read("./data/shapefiles/GSMNP-park-boundary2/GRSM_BOUNDARY_POLYGON.shp") %>%
+  st_transform(4326)
+gsmnp_boundary$ID <- factor(seq.int(nrow(gsmnp_boundary)))
+gsmnp_core <- gsmnp_boundary %>%
+  filter(ID == 17)
+
+p.k2 <- q_df_arrange_k2 %>%
+  ggplot() +
+  geom_sf(data = gsmnp_core) +
+  geom_pie_glyph(aes(y = Lat, x = Long),
+                 radius = 0.2,
+                 slice = c("K1", "K2"),
+                 colour = "grey20") +
+  theme_classic() +
+  scale_fill_manual(name = "Genetic cluster",
+                    values = cluster_cols[c(2,1)],
+                    breaks = c("K1", "K2")) +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  guides(fill = guide_legend(override.aes = list(fill = cluster_cols[c(2,1)])))
+ggsave(filename = "./plots/population_structure/snmf/p.k2.map.pie.png",
+       plot = p.k2, width = 10, height = 8)
+p.k2
+```
+
+```{r}
+ind_long_arrange <- q_df_arrange_k2 %>%
+  arrange(Long)
+p.bar.k2 <- q_df_arrange_k2 %>%
+  pivot_longer(cols = K1:K2,
+               names_to = "K",
+               values_to = "Q") %>%
+  mutate(SubjectID = factor(SubjectID, levels = ind_long_arrange$SubjectID)) %>% 
+  ggplot() +
+  geom_col(aes(x = SubjectID, y = Q, fill = K)) +
+  scale_fill_manual(name = "Genetic cluster",
+                    values = cluster_cols[c(2,1)]) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) +
+  guides(fill = guide_legend(override.aes = list(fill = cluster_cols[c(2,1)])))
+
+ggsave(filename = "./plots/population_structure/snmf/p.k2.bar.ind_long.png",
+       plot = p.bar.k2, width = 10, height = 2)
+p.bar.k2
+```
+
+
+## Plot K=3
+
+
+```{r}
+q_df_arrange_k3 <- read_csv("./out/snmf/q_df_arrange_k3.csv",
+                            show_col_types = FALSE)
+
+p.k3 <- q_df_arrange_k3 %>%
+  ggplot() +
+  geom_sf(data = gsmnp_core) +
+  geom_pie_glyph(aes(y = Lat, x = Long),
+                 radius = 0.2,
+                 slice = c("K1", "K2", "K3"),
+                 colour = "grey20") +
+  theme_classic() +
+  scale_fill_manual(name = "Genetic cluster",
+                    values = cluster_cols[c(1,3,2)]) +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  guides(fill = guide_legend(override.aes = list(fill = cluster_cols[c(2,1,3)])))
+
+ggsave(filename = "./plots/population_structure/snmf/p.k3.map.pie.png",
+       plot = p.k3, width = 10, height = 8)
+p.k3
+```
+
+
+## Plot K=4
+
+```{r}
+q_df_arrange_k4 <- read_csv("./out/snmf/q_df_arrange_k4.csv",
+                            show_col_types = FALSE)
+
+p.k4 <- q_df_arrange_k4 %>%
+  ggplot() +
+  geom_sf(data = gsmnp_core) +
+  geom_pie_glyph(aes(y = Lat, x = Long),
+                 radius = 0.2,
+                 slice = c("K1", "K2", "K3", "K4"),
+                 colour = "grey20") +
+  theme_classic() +
+  scale_fill_manual(name = "Genetic cluster",
+                    values = cluster_cols[c(4,2,3,1)]) +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  guides(fill = guide_legend(override.aes = list(fill = cluster_cols[c(2,1,3, 4)])))
+
+ggsave(filename = "./plots/population_structure/snmf/p.k4.map.pie.png",
+       plot = p.k4, width = 10, height = 8)
+
+p.k4
+```
+
+

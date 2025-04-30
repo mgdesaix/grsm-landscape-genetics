@@ -1,0 +1,267 @@
+---
+title: "Population structure in the Smokies"
+author: "Matt DeSaix"
+date: "2024-09-11"
+output: html_document
+---
+
+```{r, message = FALSE}
+# BiocManager::install("LEA")
+library(LEA)
+library(randomcoloR)
+library(tidyverse)
+```
+
+Running through population structure analyses based on Rachael's workflow (and code!)
+
+
+First off, convert data from raw PLINK to appropriate for LEA package
+
+```{r}
+LEA_geno <- read.table("./data/genotypes/buffer-10k/grsm-10k-final-571_10508.raw", header=T)
+LEA_geno <- LEA_geno[,7:ncol(LEA_geno)]
+LEA_geno <- sapply( LEA_geno, as.numeric )
+LEA_geno[is.na(LEA_geno)] <- 9 #replace missing data with 9s
+geno.name <- "./out/snmf/grsm-10k-final-571_10508.012.geno"
+write.geno(LEA_geno, geno.name)
+```
+
+Now to run through snmf with different K values
+
+```{r}
+#Run LEA
+max_k <- 8
+
+project <- NULL
+project <- snmf(geno.name,
+               K = 1:max_k,
+               entropy = TRUE,
+               repetitions = 10,
+               alpha = 1000,
+               project = "new",
+               CPU = 4)
+```
+
+Identify repititions with lowest cross-entropy for each K
+
+```{r}
+# Plink_Keep <- read.delim("./data/relatedness/GSMNP-unrelated-keep.txt", header=F)
+# colnames(Plink_Keep) <- c("Fam","SubjectID")
+Plink_Keep <- read.delim("./data/genotypes/buffer-10k/grsm-10k-final-571_10508.fam", header = F, sep = " ")[,c(1,2)]
+colnames(Plink_Keep) <- c("Fam","SubjectID")
+
+#Load existing LEA project
+project <- load.snmfProject("./out/snmf/grsm-10k-final-571_10508.012.snmfProject")
+
+num_K <- unique(project@K)
+
+best_K <- 1:length(num_K)
+  
+for(i in 1:length(best_K)){
+  best_K[i]<-which.min(cross.entropy(project, K=i))
+}
+```
+
+Plot cross entropy values
+
+```{r}
+plot(project, col = "blue", pch = 19, cex = 1.2)
+```
+
+
+```{r}
+pdf("./plots/population_structure/snmf/GRSM-10k_PopStructurePlots_alpha1000.pdf")
+plot(project, col = "blue", pch = 19, cex = 1.2) # Lower values means better model
+  
+col_pop<-distinctColorPalette(k=max(num_K))
+  
+#best_K
+  
+for(i in 2:length(num_K)){
+    barchart(project, K = num_K[i], run = best_K[i],
+             border = NA, space = 0,
+             xlab = "Individuals",
+             ylab = "Ancestry proportions",
+             col=col_pop,
+             main = paste0("K= ",i),
+             sort.by.Q=TRUE) -> bp
+    axis(1, at = 1:length(bp$order),
+         labels = Plink_Keep$SubjectID[bp$order], las=3,
+         cex.axis = .4)
+}
+dev.off()
+
+```
+
+```{r}
+meta <- read_csv("./data/genotypes/buffer-10k/grsm-10k-meta.csv",
+                 show_col_types = FALSE)
+sample.meta <- Plink_Keep %>%
+  select(SubjectID) %>%
+  left_join(meta, by = "SubjectID")
+```
+
+```{r}
+# gsmnp_sample_coords <- sample.meta %>%
+#   select(Long, Lat)
+# write.table(gsmnp_sample_coords, file = "./data/feems/grsm.10k.sample.coord",
+#             col.names = FALSE, row.names = FALSE)
+############ Assign pop IDs to all individuals ##############
+# LEAids <- Plink_Keep$SubjectID
+#   
+# for(i in 2:length(best_K)){
+#   LEA_Q <- Q(project, K=i, run=best_K[i])
+#   colnames(LEA_Q) <- 1:ncol(LEA_Q)
+#   LEA_K <- colnames(LEA_Q)[max.col(LEA_Q,ties.method="first")]
+#     
+#   temp_PopData <- cbind(LEAids,LEA_K)
+#   colnames(temp_PopData)[1] <- "SubjectID"
+#   sample.meta <- merge(sample.meta,temp_PopData, by="SubjectID")
+#   colnames(sample.meta)[ncol(sample.meta)] <- paste0("K",i)
+# }
+# write.csv(sample.meta, file="./data/GSMNP_Meta_1Oct2024_popStruct_alpha100.csv")
+```
+
+
+
+# Plot some K values
+
+## Plot K=2
+
+```{r}
+ce_k2 <- cross.entropy(project, K=2)
+best_run_k2 <- which.min(ce_k2)
+q_mat_k2 <- LEA::Q(project, K = 2, run = best_run_k2)
+colnames(q_mat_k2) <- paste0("K", 1:2)
+q_df_arrange_k2 <- sample.meta %>%
+  cbind(q_mat_k2) %>%
+  arrange(desc(K1))
+write_csv(q_df_arrange_k2, "./out/snmf/q_df_arrange_k2.csv")
+
+
+q_df_arrange_k2
+```
+
+```{r}
+q_df_arrange_k2 %>%
+  pivot_longer(cols = K1:K2,
+               names_to = "K",
+               values_to = "Q") %>%
+  mutate(SubjectID = factor(SubjectID, levels = q_df_arrange_k2$SubjectID)) %>% 
+  ggplot() +
+  geom_col(aes(x = SubjectID, y = Q, fill = K)) +
+  theme_minimal()
+```
+
+```{r}
+q_df_arrange_k2 %>%
+  pivot_longer(cols = K1:K2,
+               names_to = "K",
+               values_to = "Q") %>%
+  group_by(SubjectID) %>%
+  filter(Q == max(Q)) %>%
+  ggplot() +
+  geom_point(aes(x = Long, y = Lat, color = K, alpha = Q),
+             size = 4) +
+  theme_minimal() +
+  coord_equal()
+```
+
+
+*Basic piechart with PieGlyph*
+plot <- map + 
+  # Add pie-charts for each state
+  geom_pie_glyph(aes(y = pie_lat, x = pie_long),
+                 data = votes_data, colour = 'black',
+                 slices = c('Democratic','Republic','Other'))+
+  # Colours of the pie sectors
+  scale_fill_manual(values = c('#047db7','#c52d25', 'grey'), name = 'Party')+
+  # Place legend on top of the plot
+  theme(legend.position = 'top')
+plot
+
+```{r}
+library(PieGlyph)
+library(RColorBrewer)
+library(sf)
+cluster_cols <- brewer.pal(n = 5, name = "Dark2")
+
+gsmnp_boundary <- st_read("./data/shapefiles/GSMNP-park-boundary2/GRSM_BOUNDARY_POLYGON.shp") %>%
+  st_transform(4326)
+gsmnp_boundary$ID <- factor(seq.int(nrow(gsmnp_boundary)))
+gsmnp_core <- gsmnp_boundary %>%
+  filter(ID == 17)
+
+p.k2 <- q_df_arrange_k2 %>%
+  ggplot() +
+  geom_sf(data = gsmnp_core) +
+  geom_pie_glyph(aes(y = Lat, x = Long),
+                 radius = 0.25,
+                 slice = c("K1", "K2"),
+                 colour = "grey20") +
+  theme_classic() +
+  scale_fill_manual(name = "Genetic cluster",
+                    values = cluster_cols[c(1,2)],
+                    breaks = c("K1", "K2")) +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  guides(fill = guide_legend(override.aes = list(fill = cluster_cols[c(2,1)])))
+
+p.k2
+```
+
+```{r}
+ind_long_arrange <- q_df_arrange_k2 %>%
+  arrange(Long)
+p.bar.k2 <- q_df_arrange_k2 %>%
+  pivot_longer(cols = K1:K2,
+               names_to = "K",
+               values_to = "Q") %>%
+  mutate(SubjectID = factor(SubjectID, levels = ind_long_arrange$SubjectID)) %>% 
+  ggplot() +
+  geom_col(aes(x = SubjectID, y = Q, fill = K)) +
+  scale_fill_manual(name = "Genetic cluster",
+                    values = cluster_cols[c(1,2)]) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) +
+  guides(fill = guide_legend(override.aes = list(fill = cluster_cols[c(2,1)])))
+
+ggsave(filename = "./plots/population_structure/snmf/p.k2.bar.ind_long.png",
+       plot = p.bar.k2)
+p.bar.k2
+```
+
+
+## Plot K=3
+
+```{r}
+source("./scripts/gsmnp-functions.R")
+k3_plots <- get_snmf_plots(project = project,
+                           choiceK = 3,
+                           SMsub = sample.meta)
+
+ce_k3 <- cross.entropy(project, K=3)
+best_run_k3 <- which.min(ce_k3)
+q_mat_k3 <- LEA::Q(project, K = 3, run = best_run_k3)
+colnames(q_mat_k3) <- paste0("K", 1:3)
+q_df_arrange_k3 <- sample.meta %>%
+  cbind(q_mat_k3)
+write_csv(q_df_arrange_k3, "./out/snmf/q_df_arrange_k3.csv")
+```
+
+
+## Plot K=4
+
+```{r}
+k4_plots <- get_snmf_plots(project = project,
+                           choiceK = 4,
+                           SMsub = sample.meta)
+ce_k4 <- cross.entropy(project, K=4)
+best_run_k4 <- which.min(ce_k4)
+q_mat_k4 <- LEA::Q(project, K = 4, run = best_run_k4)
+colnames(q_mat_k4) <- paste0("K", 1:4)
+q_df_arrange_k4 <- sample.meta %>%
+  cbind(q_mat_k4)
+write_csv(q_df_arrange_k4, "./out/snmf/q_df_arrange_k4.csv")
